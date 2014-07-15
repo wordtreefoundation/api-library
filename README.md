@@ -1,7 +1,10 @@
 # WordTree Library API
 
-This is the Library API for WordTree. It provides access to books in the
+This is the Library API server for WordTree. It provides access to books in the
 WordTree library.
+
+NOTE: This is not a client library (in the software sense). This is the server
+portion that we host on our end, so you probably don't need it.
 
 ## Prerequisites
 
