@@ -7,6 +7,9 @@ WordTree library.
 
 You should have a RethinkDB server and a chaNginx server running.
 
+  - https://github.com/wordtreefoundation/dockerfiles/tree/master/rethinkdb
+  - https://github.com/wordtreefoundation/dockerfiles/tree/master/changinx
+
 ## Deployment
 
     docker run -d --name api-library \
