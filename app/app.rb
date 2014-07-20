@@ -2,12 +2,19 @@
 
 require 'sinatra'
 require 'rethinkdb'
-require './foldl'
+require 'yaml'
 
-RDB_CONFIG = {
-  :host => ENV['RDB_HOST'] || 'localhost', 
-  :port => ENV['RDB_PORT'] || 28015,
-  :db   => ENV['RDB_DB']   || 'research'
+$:.unshift(File.join(File.dirname(__FILE__), 'lib'))
+
+require 'foldl'
+require 'wordtree'
+
+CONFIG = {
+  :host          => ENV['RDB_HOST'] || 'localhost', 
+  :port          => ENV['RDB_PORT'] || 28015,
+  :db            => ENV['RDB_DB']   || 'research',
+  :library       => ENV['LIBRARY'] || 'library',
+  :max_text_size => (ENV['MAX_TEXT_SIZE'] || '40000000').to_i
 }
 
 # A friendly shortcut for accessing ReQL functions
@@ -16,24 +23,24 @@ r = RethinkDB::RQL.new
 #### Setting up the database
 
 configure do
-  set :db, RDB_CONFIG[:db]
+  set :db, CONFIG[:db]
   begin
     connection = r.connect(
-      :host => RDB_CONFIG[:host],
-      :port => RDB_CONFIG[:port])
+      :host => CONFIG[:host],
+      :port => CONFIG[:port])
   rescue Exception => err
-    puts "Cannot connect to RethinkDB database #{RDB_CONFIG[:host]}:#{RDB_CONFIG[:port]} (#{err.message})"
+    puts "Cannot connect to RethinkDB database #{CONFIG[:host]}:#{CONFIG[:port]} (#{err.message})"
     Process.exit(1)
   end
 
   begin
-    r.db_create(RDB_CONFIG[:db]).run(connection)
+    r.db_create(CONFIG[:db]).run(connection)
   rescue RethinkDB::RqlRuntimeError => err
-    puts "Database `research` already exists."
+    puts "Database `#{CONFIG[:db]}` already exists."
   end
 
   begin
-    r.db(RDB_CONFIG[:db]).table_create('books').run(connection)
+    r.db(CONFIG[:db]).table_create('books').run(connection)
   rescue RethinkDB::RqlRuntimeError => err
     puts "Table `books` already exists."
   ensure
@@ -41,17 +48,44 @@ configure do
   end
 end
 
+helpers do
+  def json_books_response(&block)
+    json_response do |object|
+      object["books"] = (books = [])
+      object["messages"] = (messages = [])
+      object["errors"] = (errors = [])
+      yield books, messages, errors if block_given?
+    end
+  end
+
+  def json_response(&block)
+    content_type :json
+
+    object = {}
+    yield object if block_given?
+    
+    JSON.pretty_generate(object)
+  end
+
+  def param_true?(value)
+    value.to_i == 1 || value == "true"
+  end
+end
+
 before do
   begin
     # When opening a connection we can also specify the database:
     @rdb_connection = r.connect(
-      :host => RDB_CONFIG[:host],
-      :port => RDB_CONFIG[:port],
+      :host => CONFIG[:host],
+      :port => CONFIG[:port],
       :db => settings.db)
   rescue Exception => err
-    logger.error "Cannot connect to RethinkDB database #{RDB_CONFIG[:host]}:#{RDB_CONFIG[:port]} (#{err.message})"
+    logger.error "Cannot connect to RethinkDB database #{CONFIG[:host]}:#{CONFIG[:port]} (#{err.message})"
     halt 501, 'This page could look nicer, unfortunately the error is the same: database not available.'
   end
+  @library  = WordTree::Disk::Library.new(CONFIG[:library])
+  @disk_lib = WordTree::Disk::Librarian.new(@library)
+  @db_lib   = WordTree::DB::Librarian.new(@rdb_connection)
 end
 
 after do
@@ -62,59 +96,60 @@ after do
   end
 end
 
-get '/' do
-  "This is the WordTree library API"
-end
 
-def match_list(params, string_keys=[], numeric_keys=[], escape=true)
-  Proc.new do |record|
-    (
-      string_keys.map do |key|
-        if params[key]
-          term = escape ? Regexp.escape(params[key]) : params[key]
-          record[key.to_s].match("(?i)#{term}")
-        end
-      end +
-      numeric_keys.map do |key|
-        if params[key]
-          if params[key].include?(',')
-            low, high = params[key].split(',', 2).map{ |v| v.to_i }
-            (record[key.to_s] >= low) & (record[key.to_s] <= high)
-          else
-            value = params[key].to_i
-            record[key.to_s].eq(value)
-          end
-        end
-      end
-    ).compact.foldl{ |a,b| a & b }
+get '/' do
+  json_response do |object|
+    object[:title] = "This is the WordTree library API"
+    object[:links] = {
+      "GET /book/:id" => "Get a book",
+      "PUT /book/:id" => "Insert or update a book's metadata"
+    }
   end
 end
 
 get '/book/:id' do
-  content_type :json
-  errors = []
-  books = []
-  if result = r.table('books').get(params[:id]).run(@rdb_connection)
-    books << result
-  else
-    errors << "Book id '#{params[:id]}' not found"
+  json_books_response do |books, msgs, errs|
+    if book = @db_lib.find(params[:id])
+      books << book.metadata
+    else
+      errs << "Book id '#{params[:id]}' not found."
+    end
   end
-  
-  JSON.pretty_generate({"errors" => errors, "books" => books})
+end
+
+put '/book/:id' do
+  json_books_response do |books, msgs, errs|
+    book = WordTree::Book.new(params)
+    unless @db_lib.save(book)
+      errs << "Unable to save book to DB"
+    end
+    unless @disk_lib.save(book)
+      errs << "Unable to save book on disk"
+    end
+  end
+end
+
+get '/book/:id/content' do
+  content_type :text
+
+  if book = @disk_lib.find(params[:id])
+    wrap = (params[:wrap] || "120").to_i
+    wrap = 30 if wrap < 30
+    param_true?(params[:clean]) ? book.content_clean(wrap) : book.content
+  else
+    [404, "Book '#{params[:id]}' not found on disk\n"]
+  end
 end
 
 get '/search' do
-  content_type :json
-  errors = []
-  books = []
-  conditions = match_list(params, [:file_id, :title, :author, :source, :status], [:year, :size_bytes])
-  cursor = r.table('books').order_by(:index => 'year').filter(&conditions).limit(20).run(@rdb_connection)
-  results = cursor.to_a
-  if !results.empty?
-    books = results
-  else
-    errors << "No books found that match the search criteria"
+  json_books_response do |books, msgs, errs|
+    page = (params[:page] || '1').to_i
+    per_page = (params[:per_page] || '20').to_i
+    found_books = @db_lib.search(params, page, per_page)
+    if found_books.nil?
+      errs << "No books found that match the search criteria"
+    else
+      found_books.each { |book| books << book.metadata }
+    end
   end
-
-  JSON.pretty_generate({"errors" => errors, "books" => books})
 end
