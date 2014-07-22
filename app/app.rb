@@ -13,8 +13,7 @@ CONFIG = {
   :host          => ENV['RDB_HOST'] || 'localhost', 
   :port          => ENV['RDB_PORT'] || 28015,
   :db            => ENV['RDB_DB']   || 'research',
-  :library       => ENV['LIBRARY'] || 'library',
-  :max_text_size => (ENV['MAX_TEXT_SIZE'] || '40000000').to_i
+  :library       => ENV['LIBRARY'] || 'library'
 }
 
 # A friendly shortcut for accessing ReQL functions

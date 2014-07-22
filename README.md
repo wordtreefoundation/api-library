@@ -18,7 +18,8 @@ You should have a RethinkDB server and a chaNginx server running.
     docker run -d --name api-library \
                --link changinx:nx \
                -e "RDB_HOST=[RethinkDB Host IP]" \
-               wordtree/api-library
+               -v /r/data/library:/library 
+               wordtree/api-library:0.1
 
 For instance, I have RethinkDB running on 192.168.1.149, so I would use:
 
