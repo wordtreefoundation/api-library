@@ -31,6 +31,11 @@ This is likely to change frequently, but at the time of writing, you can access
 these API endpoints:
 
 - Access a single book, by file_id: http://docker/library/book/firstbooknapole00gruagoog
-- Search for books published between 1827 and 1830: http://files.wordtree.org/library/search?year=1827,1830
-- Search for books with "bible" in the title: http://files.wordtree.org/library/search?title=bible
+- Search for books published between 1827 and 1830:
+
+    http://api.wordtree.org/library/search?year=1827,1830
+
+- Search for books with "bible" in the title:
+
+    http://api.wordtree.org/library/search?title=bible
 
